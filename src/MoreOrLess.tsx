@@ -1,37 +1,23 @@
-import React, { ComponentType, useCallback, useEffect, useMemo } from 'react';
+import React from 'react';
 import {
-  LayoutAnimation,
-  NativeSyntheticEvent,
   Platform,
   StyleSheet,
   Text,
-  TextLayoutEventData,
-  TextLayoutLine,
-  TextProps,
   TextStyle,
   UIManager,
   View,
-  ViewStyle,
 } from 'react-native';
-import ClippedShrunkText from './ClippedShrunkText';
-import { usePrevious, useToggle } from './hooks';
+import { ClippedText } from './components/ClippedText';
+import { OverflowChecker } from './components/OverflowChecker';
+import { useMoreOrLess } from './useMoreOrLess';
+import { MoreOrLessProps } from './MoreOrLess.types';
 
-if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+if (
+  Platform.OS === 'android' &&
+  UIManager.setLayoutAnimationEnabledExperimental
+) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
 }
-
-type MoreOrLessProps = {
-  children: string;
-  containerStyle?: ViewStyle;
-  numberOfLines: number;
-  onMorePress?: () => void;
-  moreText?: string;
-  lessText?: string;
-  textButtonStyle?: TextStyle;
-  textComponent?: ComponentType<TextProps>;
-  textStyle?: TextStyle;
-  animated?: boolean;
-} & Pick<TextProps, 'ellipsizeMode'>;
 
 const MoreOrLess = ({
   animated = false,
@@ -39,110 +25,72 @@ const MoreOrLess = ({
   containerStyle,
   numberOfLines,
   onMorePress: customOnMorePress,
+  onLessPress: customOnLessPress,
   moreText = 'more',
   lessText = 'less',
   textButtonStyle,
   textComponent: TextComponent = Text,
   textStyle,
 }: MoreOrLessProps) => {
-  const { value: isExpanded, setTrue: expandText, setFalse: shrinkText } = useToggle(false);
-  const [lines, setLines] = React.useState<TextLayoutLine[] | null>(null);
-  const [hasMore, setHasMore] = React.useState(false);
-  const previousChildren = usePrevious(children);
-  const previousNumberOfLines = usePrevious(numberOfLines);
-  const previousLines = usePrevious(lines);
-  const buttonStyleArray = [textStyle, styles.bold, textButtonStyle];
-
-  useEffect(() => {
-    if (lines !== null && numberOfLines !== previousNumberOfLines) setLines(null);
-  }, [lines, numberOfLines, previousNumberOfLines]);
-
-  useEffect(() => {
-    if (animated)
-      LayoutAnimation.configureNext({
-        duration: 600,
-        create: { type: 'linear', property: 'opacity' },
-        update: { type: 'spring', springDamping: 2 },
-        delete: { type: 'linear', property: 'opacity' },
-      });
-  }, [animated, isExpanded]);
-
-  const onTextLayoutGetLines = useCallback(
-    (event: NativeSyntheticEvent<TextLayoutEventData>) => {
-      const _lines = [...event.nativeEvent.lines];
-
-      if (_lines.length > numberOfLines) {
-        // Determine if showMore is shown or not and
-        if (_lines[numberOfLines].text) setHasMore(true);
-        // restore the array to be its original numberOfLines.
-        while (_lines.length > numberOfLines) {
-          const extraLine = _lines.pop()?.text ?? '';
-          _lines[numberOfLines - 1].text += extraLine;
-        }
-      }
-
-      setLines(_lines);
-    },
-    [numberOfLines]
-  );
-
-  const onMorePress = useMemo(
-    () => (hasMore ? customOnMorePress ?? expandText : null),
-    [customOnMorePress, expandText, hasMore]
-  );
+  const {
+    linesToRender,
+    firstRenderOrUpdate,
+    isExpanded,
+    onTextLayoutGetLines,
+    onMorePress,
+    onLessPress,
+  } = useMoreOrLess({
+    children,
+    animated,
+    numberOfLines,
+    customOnMorePress,
+    customOnLessPress,
+  });
+  const buttonStyles = [textStyle, styles.bold, textButtonStyle];
 
   if (!children) return null;
 
-  // Is rendered for the first time or children changed.
-  if (lines === null || previousChildren !== children)
+  if (firstRenderOrUpdate)
     return (
-      <View style={containerStyle}>
-        <View>
-          <TextComponent
-            style={[textStyle, styles.hiddenTextAbsolute]}
-            // "+ 1" because we want to see if
-            // the lines include another one
-            // or just fit all in 3 lines.
-            numberOfLines={numberOfLines + 1}
-            onTextLayout={onTextLayoutGetLines}
-          >
-            {children}
-          </TextComponent>
-        </View>
-      </View>
+      <OverflowChecker
+        checkText={children}
+        numberOfLines={numberOfLines + 1}
+        onTextLayout={onTextLayoutGetLines}
+        textComponent={TextComponent}
+        containerStyle={containerStyle}
+        textStyle={textStyle}
+      />
     );
-
-  const linesToRender = lines ?? previousLines;
 
   if (linesToRender)
     return (
       <View style={containerStyle}>
-        {isExpanded && !customOnMorePress ? (
+        {isExpanded ? (
           <TextComponent style={textStyle}>
             <TextComponent style={textStyle}>{children}</TextComponent>
-            <TextComponent style={buttonStyleArray} onPress={shrinkText}>
+            <TextComponent style={buttonStyles} onPress={onLessPress}>
               {' '}
               {lessText}
             </TextComponent>
           </TextComponent>
         ) : (
           <View>
-            <ClippedShrunkText
+            <ClippedText
               linesToRender={linesToRender}
               numberOfLines={numberOfLines}
               textComponent={TextComponent}
               textStyle={textStyle}
             >
               {children}
-            </ClippedShrunkText>
+            </ClippedText>
             <View style={styles.lastLine}>
               <View style={styles.ellipsedText}>
                 <TextComponent style={textStyle} numberOfLines={1}>
-                  {linesToRender[linesToRender.length - 1].text}
+                  {linesToRender[linesToRender.length - 1]?.text}
                 </TextComponent>
               </View>
               {onMorePress && (
-                <TextComponent style={buttonStyleArray} onPress={onMorePress}>
+                <TextComponent style={buttonStyles} onPress={onMorePress}>
                   {moreText}
                 </TextComponent>
               )}
@@ -157,7 +105,6 @@ const MoreOrLess = ({
 
 type MoreOrLessStyles = {
   ellipsedText: TextStyle;
-  hiddenTextAbsolute: TextStyle;
   lastLine: TextStyle;
   bold: TextStyle;
 };
@@ -168,13 +115,6 @@ const styles = StyleSheet.create<MoreOrLessStyles>({
   },
   ellipsedText: {
     flex: 1,
-  },
-  hiddenTextAbsolute: {
-    left: 0,
-    opacity: 0,
-    position: 'absolute',
-    right: 0,
-    top: 0,
   },
   lastLine: {
     flexDirection: 'row',
